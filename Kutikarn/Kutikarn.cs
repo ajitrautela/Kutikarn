@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace Kutikarn
 {
@@ -72,127 +73,90 @@ namespace Kutikarn
             }
         }
 
-        private void EncryptBinaryToFile(String fileName, string outputFileName, byte[] Key)
+        private void EncryptBinaryToFile(string inputFile, string outputFile, byte[] key)
         {
             try
             {
-                // Create a new TripleDESCryptoServiceProvider object
-                // to generate a key and initialization vector (IV).
-                TripleDESCryptoServiceProvider des = new TripleDESCryptoServiceProvider();
-
-                // Create or open the specified file.
-                using (FileStream fsout = File.Open(outputFileName, FileMode.OpenOrCreate, FileAccess.Write))
+                using (var tdes = TripleDES.Create())
                 {
+                    tdes.Key = key;
+                    tdes.IV = IV(); // 8 bytes — correct for TripleDES
 
-                    // Create a CryptoStream using the FileStream 
-                    // and the passed key and initialization vector (IV).
-                    using (CryptoStream cs = new CryptoStream(fsout, des.CreateEncryptor(Key, IV()), CryptoStreamMode.Write))
+                    using (FileStream fsOut = File.Create(outputFile))
+                    using (CryptoStream cs = new CryptoStream(fsOut, tdes.CreateEncryptor(), CryptoStreamMode.Write))
+                    using (FileStream fsIn = File.OpenRead(inputFile))
                     {
-                        // Create a StreamWriter using the CryptoStream.
-
-                        // Write the data to the stream 
-                        // to encrypt it.
-                        using (FileStream fsin = new FileStream(fileName, FileMode.Open, FileAccess.Read))
-                        {
-                            int BufferSize = 1024;
-                            byte[] ioBuffer = new byte[BufferSize];
-                            int BytesRead;
-
-                            do
-                            {
-                                BytesRead = fsin.Read(ioBuffer, 0, BufferSize);
-                                if ((BytesRead == 0))
-                                    break;
-                                cs.Write(ioBuffer, 0, BytesRead);
-                            }
-                            while (true);
-                            cs.Flush();
-                        }
+                        fsIn.CopyTo(cs);
                     }
                 }
             }
             catch (CryptographicException e)
             {
-                Console.WriteLine("A Cryptographic error occurred: {0}", e.Message);
+                Console.WriteLine($"A Cryptographic error occurred: {e.Message}");
             }
             catch (UnauthorizedAccessException e)
             {
-                Console.WriteLine("A file access error occurred: {0}", e.Message);
+                Console.WriteLine($"A file access error occurred: {e.Message}");
             }
         }
 
-        private void DecryptBinaryFromFile(String fileName, string outputFileName, byte[] Key)
+
+        private void DecryptBinaryFromFile(string inputFile, string outputFile, byte[] key)
         {
             try
             {
-                // Create a new TripleDESCryptoServiceProvider object
-                // to generate a key and initialization vector (IV).
-                TripleDESCryptoServiceProvider des = new TripleDESCryptoServiceProvider();
-
-                // Create or open the specified file. 
-                using (FileStream fsin = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var tdes = TripleDES.Create())
                 {
-                    // Create a CryptoStream using the FileStream 
-                    // and the passed key and initialization vector (IV).
-                    using (CryptoStream cs = new CryptoStream(fsin, des.CreateDecryptor(Key, IV()), CryptoStreamMode.Read))
-                    {
-                        // Create a StreamReader using the CryptoStream.
-                        using (FileStream fsout = new FileStream(outputFileName, FileMode.Create, FileAccess.Write))
-                        {
-                            int BufferSize = 1024;
-                            byte[] ioBuffer = new byte[BufferSize];
-                            int BytesRead;
+                    tdes.Key = key;
+                    tdes.IV = IV(); // fixed 8-byte IV
 
-                            do
-                            {
-                                BytesRead = cs.Read(ioBuffer, 0, BufferSize);
-                                if (BytesRead == 0)
-                                    break;
-                                fsout.Write(ioBuffer, 0, BytesRead);
-                            }
-                            while (true);
-                            fsout.Flush();
-                        }
+                    using (FileStream fsIn = File.OpenRead(inputFile))
+                    using (CryptoStream cs = new CryptoStream(fsIn, tdes.CreateDecryptor(), CryptoStreamMode.Read))
+                    using (FileStream fsOut = File.Create(outputFile))
+                    {
+                        cs.CopyTo(fsOut);
                     }
                 }
             }
             catch (CryptographicException e)
             {
-                Console.WriteLine("A Cryptographic error occurred: {0}", e.Message);
+                Console.WriteLine($"A Cryptographic error occurred: {e.Message}");
             }
             catch (UnauthorizedAccessException e)
             {
-                Console.WriteLine("A file access error occurred: {0}", e.Message);
+                Console.WriteLine($"A file access error occurred: {e.Message}");
             }
         }
+
 
         [System.Reflection.Obfuscation(Feature = "virtualization", Exclude = false)]
-        private byte[] KeyBytes(string strEncrKey)
+        private byte[] KeyBytes(string key)
         {
-            // length of 16 or 24 will work for 128 bit or 192 bit respectively
-            if (strEncrKey.Length < 16)
-            {
-                int i = 15 - strEncrKey.Length;
-                while (strEncrKey.Length < 16)
-                {
-                    strEncrKey = strEncrKey + ChArr()[i];
-                    i = i - 1;
-                }
-            }
-            else if (strEncrKey.Length > 16 & strEncrKey.Length < 24)
-            {
-                int i = 23 - strEncrKey.Length;
-                while (strEncrKey.Length < 24)
-                {
-                    strEncrKey = strEncrKey + ChArr()[i];
-                    i = i - 1;
-                }
-            }
-            else if (strEncrKey.Length > 24)
-                strEncrKey = strEncrKey.Substring(0, 24);
+            // TripleDES supports 128-bit (16 bytes) or 192-bit (24 bytes) keys.
+            const int Key16 = 16;
+            const int Key24 = 24;
 
-            return System.Text.Encoding.UTF8.GetBytes(strEncrKey);
+            var padChars = ChArr();
+
+            if (key.Length < Key16)
+            {
+                // Pad up to 16 chars
+                key = key.PadRight(Key16, padChars[0]);
+            }
+            else if (key.Length > Key16 && key.Length < Key24)
+            {
+                // Pad up to 24 chars
+                key = key.PadRight(Key24, padChars[0]);
+            }
+            else if (key.Length > Key24)
+            {
+                // Truncate to 24 chars
+                key = key.Substring(0, Key24);
+            }
+
+            return Encoding.UTF8.GetBytes(key);
         }
+
         [System.Reflection.Obfuscation(Feature = "virtualization", Exclude = false)]
         private char[] ChArr()
         {
@@ -202,7 +166,9 @@ namespace Kutikarn
         [System.Reflection.Obfuscation(Feature = "virtualization", Exclude = false)]
         private byte[] IV()
         {
-            return new byte[] { 0xB1, 0xC5, 0x60, 0x5, 0x59, 0x13, 0x4E, 0x8 };
+            // TripleDES requires an 8-byte IV (64-bit block size)
+            return new byte[] { 0xB1, 0xC5, 0x60, 0x05, 0x59, 0x13, 0x4E, 0x08 };
         }
+
     }
 }
